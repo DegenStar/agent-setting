@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.backends._legacy:_Backend"
+
+[project]
+name = "agent-setting"
+version = "1.0.0"
+description = "跨平台代理配置文件备份与上传工具"
+requires-python = ">=3.10"
+dependencies = [
+    "requests",
+]
+
+[project.scripts]
+agent-setting = "agent_setting.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["agent_setting*"]
