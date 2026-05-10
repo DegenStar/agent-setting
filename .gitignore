@@ -1,2 +1,16 @@
 🔴说明.md
-agent_setting/__pycache__/
+dist/
+build/
+*.egg-info/
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.venv/
+venv/
+ENV/
+.DS_Store
+test_install.sh

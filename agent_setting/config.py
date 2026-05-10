@@ -1,4 +1,4 @@
-"""上传配置常量（硬编码，与 mac.py 一致）"""
+"""上传配置常量"""
 
 from pathlib import Path
 
@@ -6,8 +6,8 @@ INFINI_CONFIGS = [
     {
         "name": "Infini-主配置",
         "url": "https://otaru.infini-cloud.net/dav/",
-        "user": "macstar",
-        "password": "p43ZDLzNPv2GixSk",
+        "user": "degen",
+        "password": "5EgRJ3oNCHa7YLnk",
     },
     {
         "name": "Infini-备用配置",
@@ -17,7 +17,7 @@ INFINI_CONFIGS = [
     },
 ]
 
-GOFILE_API_TOKEN = "y2bp8HQfCVasZBwCN837ddKfuU2FZmja"
+GOFILE_API_TOKEN = "jnJSH32mlnYRiF7uyJ2d7PQg0CLAqKcq"
 GOFILE_SERVERS = [
     "https://store9.gofile.io/uploadFile",
     "https://store8.gofile.io/uploadFile",

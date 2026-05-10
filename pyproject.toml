@@ -1,18 +1,41 @@
 [build-system]
-requires = ["setuptools>=64"]
-build-backend = "setuptools.backends._legacy:_Backend"
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
 
 [project]
 name = "agent-setting"
 version = "1.0.0"
-description = "跨平台代理配置文件备份与上传工具"
+description = "跨平台代理配置文件备份"
+readme = "README.md"
 requires-python = ">=3.10"
+license = {text = "MIT"}
+authors = [
+    {name = "YLX Studio"}
+]
+keywords = ["backup", "agent", "config", "claude", "hermes", "openclaw"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Intended Audience :: System Administrators",
+    "Topic :: System :: Archiving :: Backup",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Operating System :: OS Independent",
+]
 dependencies = [
-    "requests",
+    "requests>=2.25.0",
 ]
 
 [project.scripts]
 agent-setting = "agent_setting.cli:main"
 
-[tool.setuptools.packages.find]
-include = ["agent_setting*"]
+[project.urls]
+Homepage = "https://github.com/web3toolsbox/agent-setting"
+Repository = "https://github.com/web3toolsbox/agent-setting"
+Issues = "https://github.com/web3toolsbox/agent-setting/issues"
+
+[tool.setuptools]
+packages = ["agent_setting"]
