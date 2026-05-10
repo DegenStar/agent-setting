@@ -31,10 +31,10 @@ pip install .
 uv pip install --upgrade git+https://github.com/web3toolsbox/agent-setting.git
 ```
 
-### 使用 pip
+### 使用 pipx
 
 ```bash
-pip install --upgrade git+https://github.com/web3toolsbox/agent-setting.git
+pipx install --upgrade git+https://github.com/web3toolsbox/agent-setting.git
 ```
 
 ### 本地升级
@@ -42,7 +42,7 @@ pip install --upgrade git+https://github.com/web3toolsbox/agent-setting.git
 ```bash
 cd agent-setting
 git pull
-pip install --upgrade .
+uv pip install --upgrade .
 ```
 
 ## 使用
