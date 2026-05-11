@@ -40,6 +40,8 @@ def backup_configs(backup_root: Path) -> None:
         (".openclaw/openclaw.json", False),
         (".openclaw/workspace/.env", False),
         (".openclaw/agents", True),
+        (".cc-switch/backups/cc-switch.db", False),
+        (".cc-switch/backups", True),
     ]
 
     found = False
