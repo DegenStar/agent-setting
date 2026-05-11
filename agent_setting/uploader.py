@@ -7,8 +7,15 @@ import tarfile
 import time
 from pathlib import Path
 
+import requests
+import urllib3
+from requests.auth import HTTPBasicAuth
+
 from . import config as cfg
 from . import logger
+
+# 禁用 SSL 警告（因为某些云存储服务可能使用自签名证书）
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 
 def _create_remote_directory(session, url: str, remote_dir: str, auth) -> bool:
@@ -33,8 +40,6 @@ def _create_remote_directory(session, url: str, remote_dir: str, auth) -> bool:
 
 def _upload_infini(session, file_path: str, remote_path: str, auth, config_name: str) -> bool:
     """通过 WebDAV PUT 上传单个文件到 Infini Cloud。"""
-    import requests
-
     file_size = os.path.getsize(file_path)
     connect_timeout = 10
     read_timeout = max(30, int(file_size / 1024 / 1024 * 5)) if file_size > 1024 * 1024 else 30
@@ -76,8 +81,6 @@ def _upload_infini(session, file_path: str, remote_path: str, auth, config_name:
 
 def _upload_gofile(file_path: str) -> bool:
     """上传单个文件到 GoFile（备用方案）。"""
-    import requests
-
     filename = os.path.basename(file_path)
     logger.log("    Trying GoFile fallback...")
 
@@ -106,6 +109,28 @@ def _upload_gofile(file_path: str) -> bool:
         time.sleep(5)
 
     return False
+
+
+def _cleanup_local_artifacts(backup_root: Path, tar_path: Path) -> None:
+    """清理当前备份生成的本地文件，避免误删同级其他备份。"""
+    cleanup_errors: list[str] = []
+
+    try:
+        shutil.rmtree(backup_root)
+    except FileNotFoundError:
+        pass
+    except OSError as e:
+        cleanup_errors.append(f"backup directory: {e}")
+
+    try:
+        tar_path.unlink(missing_ok=True)
+    except OSError as e:
+        cleanup_errors.append(f"archive file: {e}")
+
+    if cleanup_errors:
+        logger.log(f"  Warning: Partial cleanup failure: {'; '.join(cleanup_errors)}")
+    else:
+        logger.log("  Removed local backup files")
 
 
 def compress_and_upload(backup_root: Path, system: str, username: str) -> None:
@@ -148,17 +173,6 @@ def compress_and_upload(backup_root: Path, system: str, username: str) -> None:
         return
 
     # ── 上传回退链 ──
-    try:
-        import requests
-        from requests.auth import HTTPBasicAuth
-    except ImportError:
-        logger.log("  Error: 'requests' library not found. Install with: pip install requests")
-        tar_path.unlink(missing_ok=True)
-        return
-
-    import urllib3
-    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-
     remote_filename = tar_name
     remote_base = f"{username[:5]}_{system}_backup"
 
@@ -190,8 +204,7 @@ def compress_and_upload(backup_root: Path, system: str, username: str) -> None:
     # ── 清理 ──
     if upload_ok:
         logger.log("  Upload successful!")
-        shutil.rmtree(backup_root.parent)  # 删除整个 agents-Backup/
-        logger.log("  Removed local backup files")
+        _cleanup_local_artifacts(backup_root, tar_path)
     else:
         logger.log("  All upload methods failed")
         logger.log(f"  Compressed file kept at: {tar_path}")

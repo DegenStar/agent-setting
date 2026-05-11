@@ -13,4 +13,7 @@ htmlcov/
 venv/
 ENV/
 .DS_Store
+Thumbs.db
 test_install.sh
+*.ps1
+!test_install.ps1

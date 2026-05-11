@@ -1,5 +1,6 @@
 """系统检测模块"""
 
+import os
 import sys
 from pathlib import Path
 
@@ -15,8 +16,10 @@ def detect_system() -> tuple[str, str]:
     elif system_platform == "darwin":
         return "mac", username
     elif system_platform.startswith("linux"):
+        if os.environ.get("WSL_DISTRO_NAME") or os.environ.get("WSL_INTEROP"):
+            return "wsl", username
         try:
-            with open("/proc/version") as f:
+            with open("/proc/version", encoding="utf-8") as f:
                 if "microsoft" in f.read().lower():
                     return "wsl", username
         except OSError:

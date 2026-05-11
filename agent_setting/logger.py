@@ -1,6 +1,7 @@
 """日志辅助模块"""
 
 import datetime
+import sys
 from pathlib import Path
 
 _log_path: Path | None = None
@@ -15,7 +16,15 @@ def setup_log(log_path: Path) -> None:
 
 def log(msg: str = "") -> None:
     """将消息写入终端和日志文件（带时间戳）。"""
-    print(msg)
+    try:
+        print(msg)
+    except UnicodeEncodeError:
+        safe_msg = msg.encode("ascii", errors="replace").decode("ascii")
+        try:
+            sys.stdout.write(safe_msg + "\n")
+            sys.stdout.flush()
+        except OSError:
+            pass
     if _log_path is None:
         return
     timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
