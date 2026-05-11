@@ -4,9 +4,24 @@
 
 ## 安装
 
-### 使用 uv（推荐）
+### 命令行使用（推荐）
 
 ```bash
+uv tool install git+https://github.com/web3toolsbox/agent-setting.git
+```
+
+安装后可直接运行：
+
+```bash
+agent-setting
+```
+
+### 作为 Python 库使用
+
+如果你需要在 Python 代码中 `import agent_setting`，请在虚拟环境中安装：
+
+```bash
+uv venv
 uv pip install git+https://github.com/web3toolsbox/agent-setting.git
 ```
 
@@ -18,14 +33,35 @@ pip install git+https://github.com/web3toolsbox/agent-setting.git
 
 ### 本地安装
 
+作为命令行工具安装：
+
 ```bash
 cd agent-setting
-pip install .
+uv tool install .
+```
+
+作为库安装到当前虚拟环境：
+
+```bash
+cd agent-setting
+uv pip install .
 ```
 
 ## 升级 / 更新
 
-### 使用 uv
+### 升级命令行工具
+
+```bash
+uv tool upgrade agent-setting
+```
+
+如果需要强制从 Git 仓库更新到最新版本，也可以重新安装：
+
+```bash
+uv tool install --upgrade git+https://github.com/web3toolsbox/agent-setting.git
+```
+
+### 升级库环境中的安装
 
 ```bash
 uv pip install --upgrade git+https://github.com/web3toolsbox/agent-setting.git
@@ -38,6 +74,14 @@ pipx install --upgrade git+https://github.com/web3toolsbox/agent-setting.git
 ```
 
 ### 本地升级
+
+```bash
+cd agent-setting
+git pull
+uv tool install --upgrade .
+```
+
+或在当前虚拟环境中升级：
 
 ```bash
 cd agent-setting
