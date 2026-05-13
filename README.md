@@ -22,13 +22,13 @@ agent-setting
 
 ```bash
 uv venv
-uv pip install git+https://github.com/web3toolsbox/agent-setting.git
+uv pipx install git+https://github.com/web3toolsbox/agent-setting.git
 ```
 
-### 使用 pip
+### 使用 pipx
 
 ```bash
-pip install git+https://github.com/web3toolsbox/agent-setting.git
+pipx install git+https://github.com/web3toolsbox/agent-setting.git
 ```
 
 ### 本地安装

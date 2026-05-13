@@ -17,3 +17,4 @@ Thumbs.db
 test_install.sh
 *.ps1
 !test_install.ps1
+tests/
