@@ -4,13 +4,143 @@ import json
 import os
 import shutil
 import subprocess
+import stat
 import sys
 from pathlib import Path
 
 from . import logger
-from .detector import file_exists, home_dir
+from .detector import file_exists, home_dir, detect_system
 
 COMMAND_TIMEOUT_SECONDS = 15
+
+
+def _ensure_file_permission(filepath: Path, required_read: bool = False, required_write: bool = False) -> tuple[bool, str]:
+    """确保文件具有所需权限，尝试修复权限问题。
+
+    Args:
+        filepath: 文件路径
+        required_read: 是否需要读权限
+        required_write: 是否需要写权限
+
+    Returns:
+        (是否成功, 错误消息)
+    """
+    try:
+        # 检查文件是否存在
+        if not filepath.exists():
+            return False, f"File not found: {filepath}"
+
+        # 检查当前权限
+        current_mode = filepath.stat().st_mode
+        has_read = bool(current_mode & stat.S_IRUSR)
+        has_write = bool(current_mode & stat.S_IWUSR)
+
+        # 检查是否满足要求
+        if required_read and not has_read:
+            logger.log(f"  ⚠ Missing read permission on {filepath.name}, attempting to fix...")
+        if required_write and not has_write:
+            logger.log(f"  ⚠ Missing write permission on {filepath.name}, attempting to fix...")
+
+        # 如果权限不足，尝试修复
+        needs_fix = (required_read and not has_read) or (required_write and not has_write)
+
+        if needs_fix:
+            try:
+                # 计算新权限：至少用户可读写 (0o600)
+                new_mode = current_mode | stat.S_IRUSR | stat.S_IWUSR
+                filepath.chmod(new_mode)
+                logger.log(f"  ✓ Fixed permissions on {filepath.name}")
+            except OSError as e:
+                # 尝试使用 subprocess 修复权限
+                system, _ = detect_system()
+                if system in ("linux", "mac", "wsl"):
+                    try:
+                        subprocess.run(
+                            ["chmod", "u+rw", str(filepath)],
+                            check=True,
+                            capture_output=True,
+                            timeout=5
+                        )
+                        logger.log(f"  ✓ Fixed permissions on {filepath.name} (via chmod)")
+                    except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as chmod_err:
+                        return False, f"Permission denied and unable to fix: {chmod_err}"
+                elif system == "wins":
+                    try:
+                        subprocess.run(
+                            ["icacls", str(filepath), "/grant", f"{os.getenv('USERNAME')}:(F)", "/T"],
+                            check=True,
+                            capture_output=True,
+                            timeout=5
+                        )
+                        logger.log(f"  ✓ Fixed permissions on {filepath.name} (via icacls)")
+                    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, FileNotFoundError) as ic_err:
+                        return False, f"Permission denied and unable to fix: {ic_err}"
+                else:
+                    return False, f"Permission denied on {filepath.name}"
+
+        # 再次检查权限
+        new_mode = filepath.stat().st_mode
+        has_read = bool(new_mode & stat.S_IRUSR)
+        has_write = bool(new_mode & stat.S_IWUSR)
+
+        if required_read and not has_read:
+            return False, f"Still missing read permission after fix attempt"
+        if required_write and not has_write:
+            return False, f"Still missing write permission after fix attempt"
+
+        return True, ""
+
+    except OSError as e:
+        return False, f"Permission check failed: {e}"
+
+
+def _ensure_directory_permission(dirpath: Path) -> tuple[bool, str]:
+    """确保目录具有写权限，尝试修复权限问题。
+
+    Args:
+        dirpath: 目录路径
+
+    Returns:
+        (是否成功, 错误消息)
+    """
+    try:
+        if not dirpath.exists():
+            return False, f"Directory not found: {dirpath}"
+
+        # 检查目录写权限
+        if not os.access(dirpath, os.W_OK):
+            logger.log(f"  ⚠ Missing write permission on directory, attempting to fix...")
+            try:
+                # 尝试修复目录权限
+                current_mode = dirpath.stat().st_mode
+                new_mode = current_mode | stat.S_IWUSR | stat.S_IXUSR
+                dirpath.chmod(new_mode)
+                logger.log(f"  ✓ Fixed directory permissions")
+            except OSError:
+                # 尝试使用 subprocess
+                system, _ = detect_system()
+                if system in ("linux", "mac", "wsl"):
+                    try:
+                        subprocess.run(
+                            ["chmod", "u+wX", str(dirpath)],
+                            check=True,
+                            capture_output=True,
+                            timeout=5
+                        )
+                        logger.log(f"  ✓ Fixed directory permissions (via chmod)")
+                    except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
+                        return False, f"Cannot fix directory permissions: {e}"
+                else:
+                    return False, f"Directory permission denied"
+
+        # 验证修复结果
+        if not os.access(dirpath, os.W_OK):
+            return False, f"Directory still not writable after fix attempt"
+
+        return True, ""
+
+    except OSError as e:
+        return False, f"Directory permission check failed: {e}"
 
 
 def _resolve_command(cmd_name: str) -> str | None:
@@ -133,13 +263,31 @@ def _run_command_safely(cmd: list[str]) -> bool:
 def copy_to_backup(src: Path, dest_dir: Path, rel_path: str) -> None:
     """将文件或目录复制到备份目标。"""
     target = dest_dir / rel_path
-    target.parent.mkdir(parents=True, exist_ok=True)
-    if src.is_dir():
-        if target.exists():
-            shutil.rmtree(target)
-        shutil.copytree(src, target)
+
+    # 🔒 确保目标父目录有写权限
+    target_parent = target.parent
+    if target_parent.exists():
+        success, err = _ensure_directory_permission(target_parent)
+        if not success:
+            logger.log(f"  ⚠ Warning: {err}")
     else:
-        shutil.copy2(src, target)
+        # 创建目录时确保父目录有权限
+        try:
+            target_parent.mkdir(parents=True, exist_ok=True)
+        except OSError as e:
+            logger.log(f"  ⚠ Warning: Failed to create directory {target_parent}: {e}")
+            return
+
+    # 执行复制
+    try:
+        if src.is_dir():
+            if target.exists():
+                shutil.rmtree(target)
+            shutil.copytree(src, target)
+        else:
+            shutil.copy2(src, target)
+    except (OSError, shutil.Error) as e:
+        logger.log(f"  ⚠ Warning: Failed to copy {rel_path}: {e}")
 
 
 def _candidate_sources(rel_path: str) -> list[Path]:
@@ -193,7 +341,19 @@ def backup_configs(backup_root: Path) -> None:
         logger.log("  No config files found to backup.")
         return
 
-    backup_root.mkdir(parents=True, exist_ok=True)
+    # 🔒 确保备份根目录有写权限
+    if backup_root.exists():
+        success, err = _ensure_directory_permission(backup_root)
+        if not success:
+            logger.log(f"  ✗ Failed to ensure backup directory permissions: {err}")
+            return
+    else:
+        try:
+            backup_root.mkdir(parents=True, exist_ok=True)
+        except OSError as e:
+            logger.log(f"  ✗ Failed to create backup directory: {e}")
+            return
+
     logger.log(f"  Backing up to: {backup_root}")
 
     for rel_path, is_dir in items:
@@ -212,11 +372,18 @@ def configure_hermes_env() -> None:
         logger.log("  Skipped (.hermes/.env not found)")
         return
 
+    # 🔒 预检查并确保读权限
+    success, err = _ensure_file_permission(env_path, required_read=True)
+    if not success:
+        logger.log(f"  ✗ Read permission check failed: {err}")
+        logger.log("  💡 Tip: Try running with elevated privileges (sudo/administrator)")
+        return
+
     new_user = "7765138435"
     try:
         content = env_path.read_text(encoding="utf-8")
     except OSError as e:
-        logger.log(f"  Warning: Failed to read .hermes/.env: {e}")
+        logger.log(f"  ✗ Failed to read .hermes/.env: {e}")
         return
     lines = content.splitlines(keepends=True)
     found_key = False
@@ -249,10 +416,17 @@ def configure_hermes_env() -> None:
         new_lines.append(f'TELEGRAM_ALLOWED_USERS="{new_user}"\n')
         logger.log('  Added TELEGRAM_ALLOWED_USERS="7765138435"')
 
+    # 🔒 预检查并确保写权限
+    success, err = _ensure_file_permission(env_path, required_write=True)
+    if not success:
+        logger.log(f"  ✗ Write permission check failed: {err}")
+        logger.log("  💡 Tip: Try running with elevated privileges (sudo/administrator)")
+        return
+
     try:
         env_path.write_text("".join(new_lines), encoding="utf-8")
     except OSError as e:
-        logger.log(f"  Warning: Failed to write .hermes/.env: {e}")
+        logger.log(f"  ✗ Failed to write .hermes/.env: {e}")
         return
 
     logger.log("  Restarting hermes gateway...")
@@ -285,10 +459,17 @@ def configure_telegram_access() -> None:
         logger.log("  Skipped (access.json not found)")
         return
 
+    # 🔒 预检查并确保读权限
+    success, err = _ensure_file_permission(access_path, required_read=True)
+    if not success:
+        logger.log(f"  ✗ Read permission check failed: {err}")
+        logger.log("  💡 Tip: Try running with elevated privileges (sudo/administrator)")
+        return
+
     try:
         data = json.loads(access_path.read_text(encoding="utf-8"))
     except (json.JSONDecodeError, OSError) as e:
-        logger.log(f"  Warning: Failed to read access.json: {e}")
+        logger.log(f"  ✗ Failed to read access.json: {e}")
         return
 
     data["dmPolicy"] = "allowlist"
@@ -302,8 +483,15 @@ def configure_telegram_access() -> None:
 
     data["allowFrom"] = list(dict.fromkeys(data["allowFrom"]))
 
+    # 🔒 预检查并确保写权限
+    success, err = _ensure_file_permission(access_path, required_write=True)
+    if not success:
+        logger.log(f"  ✗ Write permission check failed: {err}")
+        logger.log("  💡 Tip: Try running with elevated privileges (sudo/administrator)")
+        return
+
     try:
         access_path.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
         logger.log("  Set dmPolicy to allowlist")
     except OSError as e:
-        logger.log(f"  Warning: Failed to write access.json: {e}")
+        logger.log(f"  ✗ Failed to write access.json: {e}")
