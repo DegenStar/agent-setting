@@ -16,5 +16,4 @@ ENV/
 Thumbs.db
 *.ps1
 !test_install.ps1
-test/
 demo_permission_fix.py

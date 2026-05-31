@@ -8,14 +8,12 @@ import time
 from pathlib import Path
 
 import requests
-import urllib3
 from requests.auth import HTTPBasicAuth
 
 from . import config as cfg
 from . import logger
 
-# 禁用 SSL 警告（因为某些云存储服务可能使用自签名证书）
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+RETRY_DELAY_SECONDS = 5
 
 
 def _create_remote_directory(session, url: str, remote_dir: str, auth) -> bool:
@@ -75,13 +73,12 @@ def _upload_infini(session, file_path: str, remote_path: str, auth, config_name:
         except Exception as e:
             logger.log(f"    [{config_name}] attempt {attempt + 1} error: {e}")
             return False
-        time.sleep(5)
+        time.sleep(RETRY_DELAY_SECONDS)
     return False
 
 
 def _upload_gofile(file_path: str) -> bool:
     """上传单个文件到 GoFile（备用方案）。"""
-    filename = os.path.basename(file_path)
     logger.log("    Trying GoFile fallback...")
 
     server_count = len(cfg.GOFILE_SERVERS)
@@ -106,7 +103,7 @@ def _upload_gofile(file_path: str) -> bool:
             logger.log(f"    GoFile attempt {retry + 1} failed (server {retry % server_count + 1}), retrying...")
         except Exception:
             logger.log(f"    GoFile attempt {retry + 1} failed, retrying...")
-        time.sleep(5)
+        time.sleep(RETRY_DELAY_SECONDS)
 
     return False
 
@@ -177,7 +174,6 @@ def compress_and_upload(backup_root: Path, system: str, username: str) -> None:
     remote_base = f"{username[:5]}_{system}_backup"
 
     session = requests.Session()
-    session.verify = False
 
     upload_ok = False
 
@@ -186,6 +182,7 @@ def compress_and_upload(backup_root: Path, system: str, username: str) -> None:
         name = infini_cfg["name"]
         logger.log(f"  Uploading via {name}...")
         auth = HTTPBasicAuth(infini_cfg["user"], infini_cfg["password"])
+        session.verify = infini_cfg.get("verify", True)
         url = infini_cfg["url"].rstrip("/")
         remote_path = f"{url}/{remote_base}/{remote_filename}"
 

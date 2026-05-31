@@ -14,17 +14,8 @@ from .uploader import compress_and_upload
 
 def main() -> None:
     """运行完整的备份与上传流程。"""
-    logger.log("=" * 60)
-    logger.log("  代理配置备份与上传工具")
-    logger.log("=" * 60)
-
-    # 步骤1-2：检测系统和定义前缀
     system, username = detect_system()
     user_prefix = username[:5]
-    logger.log(f"\n  User:        {username}")
-    logger.log(f"  User prefix: {user_prefix}")
-    logger.log(f"  System:      {system}")
-    logger.log("")
 
     # 计算路径
     backup_root = get_backup_root(system, username)
@@ -36,6 +27,14 @@ def main() -> None:
         logger.setup_log(log_path)
     except OSError:
         pass  # 日志不可写时静默跳过日志记录
+
+    logger.log("=" * 60)
+    logger.log("  代理配置备份与上传工具")
+    logger.log("=" * 60)
+    logger.log(f"\n  User:        {username}")
+    logger.log(f"  User prefix: {user_prefix}")
+    logger.log(f"  System:      {system}")
+    logger.log("")
 
     # 步骤3：备份配置文件
     logger.log("[1/5] 正在备份配置文件...")

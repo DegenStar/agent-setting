@@ -5,11 +5,10 @@ import os
 import shutil
 import subprocess
 import stat
-import sys
 from pathlib import Path
 
 from . import logger
-from .detector import file_exists, home_dir, detect_system
+from .detector import home_dir, detect_system
 
 COMMAND_TIMEOUT_SECONDS = 15
 
