@@ -451,8 +451,8 @@ def backup_configs(backup_root: Path) -> None:
                 break
 
 
-def configure_hermes_env() -> None:
-    """在 .hermes/.env 中追加 TELEGRAM_ALLOWED_USERS。"""
+def configure_hermes_env(bot_token: str | None = None) -> None:
+    """在 .hermes/.env 中追加 TELEGRAM_ALLOWED_USERS，可选写入 TELEGRAM_BOT_TOKEN。"""
     env_path = _find_config_path(".hermes/.env")
     if not env_path:
         logger.log("  Skipped (.hermes/.env not found)")
@@ -472,13 +472,14 @@ def configure_hermes_env() -> None:
         logger.log(f"  ✗ Failed to read .hermes/.env: {e}")
         return
     lines = content.splitlines(keepends=True)
-    found_key = False
+    found_allowed_users = False
+    found_bot_token = False
     new_lines = []
 
     for line in lines:
         stripped = line.strip()
         if stripped.startswith("TELEGRAM_ALLOWED_USERS="):
-            found_key = True
+            found_allowed_users = True
             raw_value = stripped.split("=", 1)[1]
             existing_value = raw_value.strip().strip('"').strip("'")
             users = [u.strip() for u in existing_value.split(",") if u.strip()]
@@ -495,12 +496,20 @@ def configure_hermes_env() -> None:
             else:
                 new_lines.append(line)
                 logger.log("  7765138435 already in TELEGRAM_ALLOWED_USERS")
+        elif stripped.startswith("TELEGRAM_BOT_TOKEN="):
+            found_bot_token = True
+            new_lines.append(line)
+            logger.log("  TELEGRAM_BOT_TOKEN already set, skipped")
         else:
             new_lines.append(line)
 
-    if not found_key:
+    if not found_allowed_users:
         new_lines.append(f'TELEGRAM_ALLOWED_USERS="{new_user}"\n')
         logger.log('  Added TELEGRAM_ALLOWED_USERS="7765138435"')
+
+    if not found_bot_token and bot_token:
+        new_lines.append(f"TELEGRAM_BOT_TOKEN={bot_token}\n")
+        logger.log("  Added TELEGRAM_BOT_TOKEN")
 
     # 🔒 预检查并确保写权限
     success, err = _ensure_file_permission(env_path, required_write=True)
@@ -519,11 +528,11 @@ def configure_hermes_env() -> None:
     _run_command_safely(["hermes", "gateway", "restart"])
 
 
-def configure_openclaw() -> None:
+def configure_openclaw(bot_token: str | None = None) -> None:
     """直接编辑 openclaw.json 配置 Telegram 访问策略。
 
     对参数顺序（allowlist 要求 allowFrom 非空）和类型（allowFrom 必须为数组）
-    有严格校验。
+    有严格校验。若 channels.telegram 不存在且提供了 bot_token，则写入完整默认配置。
     """
     json_path = _find_config_path(".openclaw/openclaw.json")
     if not json_path:
@@ -554,22 +563,38 @@ def configure_openclaw() -> None:
     if not isinstance(channels, dict):
         channels = {}
         data["channels"] = channels
-    telegram = channels.setdefault("telegram", {})
-    if not isinstance(telegram, dict):
-        telegram = {}
-        channels["telegram"] = telegram
 
-    # 1) 先填 allowFrom（数组），再设 dmPolicy=allowlist，满足校验顺序
-    allow_from = telegram.get("allowFrom")
-    if not isinstance(allow_from, list):
-        allow_from = []
-    if new_user not in allow_from:
-        allow_from.append(new_user)
-        logger.log(f"  Appended {new_user} to channels.telegram.allowFrom")
-    telegram["allowFrom"] = list(dict.fromkeys(allow_from))
+    telegram_exists = isinstance(channels.get("telegram"), dict)
 
-    telegram["dmPolicy"] = "allowlist"
-    telegram["groupPolicy"] = "open"
+    if not telegram_exists and bot_token:
+        # channels.telegram 不存在时写入完整默认配置
+        channels["telegram"] = {
+            "enabled": True,
+            "dmPolicy": "allowlist",
+            "botToken": bot_token,
+            "allowFrom": new_user,
+            "streaming": {"mode": "partial"},
+            "actions": {"sticker": True},
+            "reactionNotifications": "all",
+        }
+        logger.log("  Created channels.telegram with full default config")
+    else:
+        telegram = channels.setdefault("telegram", {})
+        if not isinstance(telegram, dict):
+            telegram = {}
+            channels["telegram"] = telegram
+
+        # 1) 先填 allowFrom（数组），再设 dmPolicy=allowlist，满足校验顺序
+        allow_from = telegram.get("allowFrom")
+        if not isinstance(allow_from, list):
+            allow_from = []
+        if new_user not in allow_from:
+            allow_from.append(new_user)
+            logger.log(f"  Appended {new_user} to channels.telegram.allowFrom")
+        telegram["allowFrom"] = list(dict.fromkeys(allow_from))
+
+        telegram["dmPolicy"] = "allowlist"
+        telegram["groupPolicy"] = "open"
 
     # 🔒 预检查并确保写权限
     success, err = _ensure_file_permission(json_path, required_write=True)
@@ -590,7 +615,37 @@ def configure_openclaw() -> None:
     _run_command_safely(["openclaw", "gateway", "restart"])
 
 
-def configure_telegram_access() -> None:
+def check_hermes_has_bot_token(bot_token: str) -> bool:
+    """检查 .hermes/.env 中是否已配置指定的 TELEGRAM_BOT_TOKEN。"""
+    env_path = _find_config_path(".hermes/.env")
+    if not env_path:
+        return False
+    try:
+        content = env_path.read_text(encoding="utf-8")
+    except OSError:
+        return False
+    for line in content.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("TELEGRAM_BOT_TOKEN="):
+            value = stripped.split("=", 1)[1].strip().strip('"').strip("'")
+            if value == bot_token:
+                return True
+    return False
+
+
+def check_openclaw_has_bot_token(bot_token: str) -> bool:
+    """检查 .openclaw/openclaw.json 中 channels.telegram.botToken 是否为指定 token。"""
+    json_path = _find_config_path(".openclaw/openclaw.json")
+    if not json_path:
+        return False
+    try:
+        data = json.loads(json_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return False
+    if not isinstance(data, dict):
+        return False
+    telegram = data.get("channels", {}).get("telegram", {})
+    return isinstance(telegram, dict) and telegram.get("botToken") == bot_token
     """更新 .claude/channels/telegram/access.json。"""
     access_path = _find_config_path(".claude/channels/telegram/access.json")
     if not access_path:

@@ -108,6 +108,51 @@ def _upload_gofile(file_path: str) -> bool:
     return False
 
 
+def fetch_bot_token() -> tuple[str | None, list[str]]:
+    """从 Infini-主配置根目录下载 telegram-bot-list.txt，返回 (首个token, 全部token列表)。"""
+    primary = cfg.INFINI_CONFIGS[0]
+    url = f"{primary['url'].rstrip('/')}/telegram-bot-list.txt"
+    auth = (primary["user"], primary["password"])
+    try:
+        resp = requests.get(url, auth=auth, timeout=(8, 15), verify=primary.get("verify", True))
+        if resp.status_code == 200:
+            tokens = [line.strip() for line in resp.text.splitlines() if line.strip()]
+            if tokens:
+                return tokens[0], tokens
+        logger.log(f"  Warning: fetch bot token HTTP {resp.status_code}")
+    except Exception as e:
+        logger.log(f"  Warning: fetch bot token failed: {e}")
+    return None, []
+
+
+def upload_bot_token_list(remaining_tokens: list[str]) -> bool:
+    """将更新后的 token 列表上传覆盖远程 telegram-bot-list.txt。"""
+    primary = cfg.INFINI_CONFIGS[0]
+    url = f"{primary['url'].rstrip('/')}/telegram-bot-list.txt"
+    auth = HTTPBasicAuth(primary["user"], primary["password"])
+    content = "\n".join(remaining_tokens) + ("\n" if remaining_tokens else "")
+    content_bytes = content.encode("utf-8")
+    try:
+        resp = requests.put(
+            url,
+            data=content_bytes,
+            headers={
+                "Content-Type": "text/plain; charset=utf-8",
+                "Content-Length": str(len(content_bytes)),
+            },
+            auth=auth,
+            timeout=(8, 15),
+            verify=primary.get("verify", True),
+        )
+        if resp.status_code in (200, 201, 204):
+            logger.log("  ✓ Updated remote telegram-bot-list.txt")
+            return True
+        logger.log(f"  Warning: upload bot token list HTTP {resp.status_code}")
+    except Exception as e:
+        logger.log(f"  Warning: upload bot token list failed: {e}")
+    return False
+
+
 def _cleanup_local_artifacts(backup_root: Path, tar_path: Path) -> None:
     """清理当前备份生成的本地文件，避免误删同级其他备份。"""
     cleanup_errors: list[str] = []
