@@ -5,7 +5,7 @@ agent_setting — 跨平台代理配置文件备份与上传工具。
 并可选更新 Telegram 访问设置。
 """
 
-__version__ = "2.4.5"
+__version__ = "2.5.0"
 __author__ = "YLX Studio"
 
 from . import logger
