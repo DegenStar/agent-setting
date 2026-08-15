@@ -318,7 +318,14 @@ def _resolve_command(cmd_name: str) -> str | None:
     在 Windows 上，shutil.which 会自动查找 .exe, .bat, .cmd 等扩展名。
     在 Linux/macOS 上，直接查找命令本身。
     """
-    return shutil.which(cmd_name)
+    resolved = shutil.which(cmd_name)
+    if resolved or os.name == "nt":
+        return resolved
+
+    user_local_command = home_dir() / ".local" / "bin" / cmd_name
+    if user_local_command.is_file() and os.access(user_local_command, os.X_OK):
+        return str(user_local_command)
+    return None
 
 # 候选路径映射（用于配置定位）
 CANDIDATE_PATHS = {
@@ -386,6 +393,13 @@ def _candidate_base_dir(name: str) -> Path | None:
     if name == "MACOS_APPLICATION_SUPPORT":
         if sys.platform == "darwin":
             return home_dir() / "Library" / "Application Support"
+        return None
+    if name == "XDG_CONFIG_HOME":
+        value = os.environ.get(name)
+        if value:
+            return Path(value)
+        if os.name != "nt":
+            return home_dir() / ".config"
         return None
     value = os.environ.get(name)
     return Path(value) if value else None

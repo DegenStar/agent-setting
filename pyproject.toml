@@ -39,4 +39,3 @@ Issues = "https://github.com/web3toolsbox/agent-setting/issues"
 
 [tool.setuptools]
 packages = ["agent_setting"]
-package-dir = {agent_setting = "."}

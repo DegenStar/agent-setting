@@ -1,5 +1,6 @@
 """增强的跨平台兼容性测试"""
 
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -81,6 +82,22 @@ class FindConfigPathTests(unittest.TestCase):
 
             self.assertEqual(found, config_path)
 
+    def test_finds_in_default_xdg_config_home(self) -> None:
+        """XDG_CONFIG_HOME 未设置时使用 ~/.config。"""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            home = Path(tmpdir) / "home"
+            config_path = home / ".config" / "claude" / "config.json"
+            config_path.parent.mkdir(parents=True)
+            config_path.write_text('{"managed":true}\n', encoding="utf-8")
+
+            with (
+                patch.object(backup, "home_dir", return_value=home),
+                patch.dict("os.environ", {}, clear=True),
+            ):
+                found = backup._find_config_path(".claude/config.json")
+
+            self.assertEqual(found, config_path)
+
     def test_returns_none_when_not_found(self) -> None:
         """配置不存在时返回 None。"""
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -128,6 +145,23 @@ class ResolveCommandTests(unittest.TestCase):
         """不存在的命令返回 None。"""
         resolved = backup._resolve_command("this-command-definitely-does-not-exist-12345")
         self.assertIsNone(resolved)
+
+    @unittest.skipIf(os.name == "nt", "Unix user-local executable lookup")
+    def test_resolves_executable_from_user_local_bin(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            home = Path(tmpdir)
+            executable = home / ".local" / "bin" / "agent-tool"
+            executable.parent.mkdir(parents=True)
+            executable.write_text("#!/bin/sh\n", encoding="utf-8")
+            executable.chmod(0o755)
+
+            with (
+                patch.object(backup, "home_dir", return_value=home),
+                patch.object(backup.shutil, "which", return_value=None),
+            ):
+                resolved = backup._resolve_command("agent-tool")
+
+            self.assertEqual(resolved, str(executable))
 
     def test_run_command_uses_resolved_executable_path(self) -> None:
         resolved = "C:/Program Files/tool/tool.cmd"
