@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "agent-setting"
-version = "2.5.0"
+version = "3.0.0"
 description = "跨平台代理配置文件备份"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -32,6 +32,9 @@ dependencies = [
 [project.scripts]
 agent-setting = "agent_setting.cli:main"
 
+[project.optional-dependencies]
+test = ["pytest>=7", "setuptools>=64", "wheel"]
+
 [project.urls]
 Homepage = "https://github.com/web3toolsbox/agent-setting"
 Repository = "https://github.com/web3toolsbox/agent-setting"
@@ -39,3 +42,8 @@ Issues = "https://github.com/web3toolsbox/agent-setting/issues"
 
 [tool.setuptools]
 packages = ["agent_setting"]
+
+[tool.pytest.ini_options]
+# 本项目未使用录制插件；阻止不兼容的全局 pytest-recording 自动加载。
+addopts = "-p no:recording"
+testpaths = ["test"]

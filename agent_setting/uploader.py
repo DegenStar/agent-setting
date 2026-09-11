@@ -5,6 +5,7 @@ import hashlib
 import os
 import shutil
 import tarfile
+import tempfile
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -42,14 +43,20 @@ def _create_remote_directory(session, url: str, remote_dir: str, auth) -> bool:
                 if _create_remote_directory(session, url, parent, auth):
                     resp = session.request("MKCOL", dir_path, auth=auth, timeout=(8, 8))
                     return resp.status_code in (201, 204, 405)
+        logger.log(f"  MKCOL failed for {remote_dir}: HTTP {resp.status_code}")
         return False
-    except Exception:
+    except requests.RequestException as e:
+        logger.log(f"  MKCOL failed for {remote_dir} ({type(e).__name__}: {e})")
         return False
 
 
 def _upload_infini(session, file_path: str, remote_path: str, auth, config_name: str) -> bool:
     """通过 WebDAV PUT 上传单个文件到 Infini Cloud。"""
-    file_size = os.path.getsize(file_path)
+    try:
+        file_size = os.path.getsize(file_path)
+    except OSError as e:
+        logger.log(f"    [{config_name}] cannot read upload file ({type(e).__name__}: {e})")
+        return False
     connect_timeout = 10
     read_timeout = max(30, int(file_size / 1024 / 1024 * 5)) if file_size > 1024 * 1024 else 30
 
@@ -77,7 +84,8 @@ def _upload_infini(session, file_path: str, remote_path: str, auth, config_name:
                     )
                     verify_status = verify_resp.status_code
                     remote_size = int(verify_resp.headers.get("Content-Length", "-1"))
-                except (AttributeError, TypeError, ValueError, requests.RequestException):
+                except (TypeError, ValueError, requests.RequestException) as e:
+                    logger.log(f"    [{config_name}] HEAD verification failed ({type(e).__name__}: {e})")
                     remote_size = -1
                 if verify_status == 200 and remote_size == file_size:
                     logger.log(f"    ✓ [{config_name}] upload successful and size verified")
@@ -94,12 +102,10 @@ def _upload_infini(session, file_path: str, remote_path: str, auth, config_name:
                 return False
             else:
                 logger.log(f"    [{config_name}] attempt {attempt + 1} failed (HTTP {resp.status_code}), retrying...")
-        except requests.exceptions.Timeout:
-            logger.log(f"    [{config_name}] attempt {attempt + 1} timed out, retrying...")
-        except requests.exceptions.ConnectionError:
-            logger.log(f"    [{config_name}] attempt {attempt + 1} connection error, retrying...")
-        except Exception as e:
-            logger.log(f"    [{config_name}] attempt {attempt + 1} error: {e}")
+        except requests.RequestException as e:
+            logger.log(f"    [{config_name}] attempt {attempt + 1} failed ({type(e).__name__}: {e}), retrying...")
+        except OSError as e:
+            logger.log(f"    [{config_name}] local file error ({type(e).__name__}: {e})")
             return False
         time.sleep(RETRY_DELAY_SECONDS)
     return False
@@ -110,8 +116,15 @@ def _upload_gofile(file_path: str) -> bool:
     logger.log("    Trying GoFile fallback...")
 
     server_count = len(cfg.GOFILE_SERVERS)
+    if server_count == 0:
+        logger.log("    GoFile upload skipped: no servers configured")
+        return False
     max_retries = server_count * 2
-    local_size = os.path.getsize(file_path)
+    try:
+        local_size = os.path.getsize(file_path)
+    except OSError as e:
+        logger.log(f"    GoFile cannot read upload file ({type(e).__name__}: {e})")
+        return False
     local_md5: str | None = None
 
     for retry in range(max_retries):
@@ -127,8 +140,12 @@ def _upload_gofile(file_path: str) -> bool:
                 )
             if resp.ok:
                 result = resp.json()
+                if not isinstance(result, dict):
+                    raise ValueError("GoFile response root must be an object")
                 if result.get("status") == "ok":
                     data = result.get("data") or {}
+                    if not isinstance(data, dict):
+                        raise ValueError("GoFile response data must be an object")
                     remote_size = data.get("size")
                     if remote_size is None and isinstance(data.get("file"), dict):
                         remote_size = data["file"].get("size")
@@ -153,9 +170,16 @@ def _upload_gofile(file_path: str) -> bool:
                         logger.log("    ✓ GoFile upload successful and remote data verified")
                         return True
                     logger.log("    GoFile response verification failed, retrying...")
+                else:
+                    logger.log(f"    GoFile API status: {result.get('status')}")
+            else:
+                logger.log(f"    GoFile HTTP {resp.status_code}")
             logger.log(f"    GoFile attempt {retry + 1} failed (server {retry % server_count + 1}), retrying...")
-        except Exception:
-            logger.log(f"    GoFile attempt {retry + 1} failed, retrying...")
+        except (requests.RequestException, ValueError) as e:
+            logger.log(f"    GoFile attempt {retry + 1} failed ({type(e).__name__}: {e}), retrying...")
+        except OSError as e:
+            logger.log(f"    GoFile local file error ({type(e).__name__}: {e})")
+            return False
         time.sleep(RETRY_DELAY_SECONDS)
 
     return False
@@ -216,8 +240,10 @@ def claim_bot_token() -> BotTokenClaim | None:
                         last_error = f"{infini_cfg['name']}: concurrent update conflict"
                     else:
                         last_error = f"{infini_cfg['name']}: claim HTTP {claim_resp.status_code}"
-            except Exception as e:
-                last_error = f"{infini_cfg['name']}: {e}"
+            except requests.RequestException as e:
+                last_error = f"{infini_cfg['name']}: {type(e).__name__}: {e}"
+
+            logger.log(f"  Token claim attempt {attempt + 1} failed: {last_error}")
 
             if attempt < FETCH_TOKEN_MAX_ATTEMPTS - 1:
                 time.sleep(RETRY_DELAY_SECONDS)
@@ -228,7 +254,7 @@ def claim_bot_token() -> BotTokenClaim | None:
 
 def release_bot_token(claim: BotTokenClaim) -> bool:
     """配置未使用 token 时，通过 ETag/If-Match 将其安全放回原始节点。"""
-    if claim.source_index >= len(cfg.INFINI_CONFIGS):
+    if not 0 <= claim.source_index < len(cfg.INFINI_CONFIGS):
         logger.log("  Warning: token source no longer exists; unable to release token")
         return False
     infini_cfg = cfg.INFINI_CONFIGS[claim.source_index]
@@ -268,9 +294,10 @@ def release_bot_token(claim: BotTokenClaim) -> bool:
                 return True
             if put_resp.status_code != 412:
                 raise RuntimeError(f"HTTP {put_resp.status_code}")
-        except Exception as e:
+            logger.log(f"  Token release attempt {attempt + 1}: concurrent update conflict (HTTP 412)")
+        except (requests.RequestException, RuntimeError) as e:
+            logger.log(f"  Token release attempt {attempt + 1} failed ({type(e).__name__}: {e})")
             if attempt == FETCH_TOKEN_MAX_ATTEMPTS - 1:
-                logger.log(f"  Warning: release bot token failed: {e}")
                 return False
         time.sleep(RETRY_DELAY_SECONDS)
     return False
@@ -278,6 +305,15 @@ def release_bot_token(claim: BotTokenClaim) -> bool:
 
 def _cleanup_local_artifacts(backup_root: Path, tar_path: Path) -> None:
     """清理当前备份生成的本地文件，避免误删同级其他备份。"""
+    if (
+        not cfg.is_managed_staging_root(backup_root)
+        or tar_path.is_symlink()
+        or tar_path.parent.resolve() != backup_root.parent.resolve()
+        or not tar_path.name.startswith(f"{backup_root.name}_")
+        or not tar_path.name.endswith(".tar.gz")
+    ):
+        logger.console(f"  Local files kept: cleanup target is not managed staging: {backup_root}")
+        return
     cleanup_errors: list[str] = []
 
     try:
@@ -293,21 +329,21 @@ def _cleanup_local_artifacts(backup_root: Path, tar_path: Path) -> None:
         cleanup_errors.append(f"archive file: {e}")
 
     if cleanup_errors:
-        logger.log(f"  Warning: Partial cleanup failure: {'; '.join(cleanup_errors)}")
+        logger.error(f"  Warning: Partial cleanup failure: {'; '.join(cleanup_errors)}")
     else:
         logger.log("  Removed local backup files")
+        logger.console(f"  Removed local backup files: {backup_root} and {tar_path}")
 
 
-def compress_and_upload(backup_root: Path, system: str, username: str) -> bool:
-    """压缩备份目录并通过回退链上传。"""
+def compress_and_upload(backup_root: Path, system: str, username: str, *, keep_local: bool = False) -> bool:
+    """上传备份；keep_local 保留副本，自动清理仅限本进程创建的暂存目录。"""
     if not backup_root.exists():
         logger.log("  Skipped (backup directory not found)")
         return False
 
-    # 生成带时间戳的压缩包文件名
+    # 时间戳加独占创建的随机后缀，重复调用不会覆盖已有副本。
     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-    tar_name = f"{backup_root.name}_{timestamp}.tar.gz"
-    tar_path = backup_root.with_name(tar_name)
+    tar_path: Path | None = None
 
     logger.log(f"  Compressing: {backup_root.name}/")
 
@@ -317,9 +353,16 @@ def compress_and_upload(backup_root: Path, system: str, username: str) -> bool:
             logger.log("  Warning: backup directory is empty, skipping")
             return False
 
-        archive_fd = os.open(tar_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-        if os.name != "nt":
-            os.fchmod(archive_fd, 0o600)
+        logger.log("  Backup file list (cleanup candidates after verified upload):")
+        for entry in sorted(backup_root.rglob("*")):
+            logger.log(f"    {entry.relative_to(backup_root)}")
+
+        archive_fd, archive_name = tempfile.mkstemp(
+            dir=backup_root.parent,
+            prefix=f"{backup_root.name}_{timestamp}_",
+            suffix=".tar.gz",
+        )
+        tar_path = Path(archive_name)
         with os.fdopen(archive_fd, "wb") as archive_file:
             with tarfile.open(fileobj=archive_file, mode="w:gz") as tar:
                 tar.add(str(backup_root), arcname=backup_root.name)
@@ -338,11 +381,15 @@ def compress_and_upload(backup_root: Path, system: str, username: str) -> bool:
         logger.log(f"  Compressed: {size_str}")
     except (OSError, tarfile.TarError) as e:
         logger.log(f"  Error: compression failed: {e}")
-        tar_path.unlink(missing_ok=True)
+        if tar_path is not None:
+            try:
+                tar_path.unlink(missing_ok=True)
+            except OSError as cleanup_error:
+                logger.error(f"  Cannot remove incomplete archive {tar_path}: {cleanup_error}")
         return False
 
     # ── 上传回退链 ──
-    remote_filename = tar_name
+    remote_filename = tar_path.name
     remote_base = f"{username[:5]}_{system}_backup"
 
     session = requests.Session()
@@ -372,9 +419,11 @@ def compress_and_upload(backup_root: Path, system: str, username: str) -> bool:
         upload_ok = _upload_gofile(str(tar_path))
 
     # ── 清理 ──
-    if upload_ok:
+    if upload_ok and not keep_local:
         logger.log("  Upload successful!")
         _cleanup_local_artifacts(backup_root, tar_path)
+    elif upload_ok:
+        logger.console(f"  Upload successful; local backup kept at: {backup_root}; archive: {tar_path}")
     else:
         logger.log("  All upload methods failed")
         logger.log(f"  Compressed file kept at: {tar_path}")

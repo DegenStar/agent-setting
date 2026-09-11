@@ -29,7 +29,7 @@ class CliExitStatusTests(unittest.TestCase):
                 patch.object(cli, "configure_telegram_access"),
                 patch.object(cli, "compress_and_upload", return_value=True),
             ):
-                result = cli.main()
+                result = cli.main([])
 
             self.assertEqual(result, 0)
             download_mock.assert_called_once_with("linux")
@@ -55,7 +55,7 @@ class CliExitStatusTests(unittest.TestCase):
                 patch.object(cli, "configure_telegram_access"),
                 patch.object(cli, "compress_and_upload", return_value=False),
             ):
-                result = cli.main()
+                result = cli.main([])
 
             self.assertEqual(result, 1)
 
@@ -84,7 +84,7 @@ class CliExitStatusTests(unittest.TestCase):
                 patch.object(cli, "configure_telegram_access"),
                 patch.object(cli, "compress_and_upload", return_value=True),
             ):
-                result = cli.main()
+                result = cli.main([])
 
             self.assertEqual(result, 1)
 
@@ -105,10 +105,12 @@ class CliExitStatusTests(unittest.TestCase):
                 patch.object(cli, "download_agent_scripts"),
                 patch.object(cli, "claim_bot_token", return_value=claim),
                 patch.object(cli, "configure_hermes_env", side_effect=RuntimeError("boom")),
+                patch.object(cli, "check_hermes_has_bot_token", return_value=False),
+                patch.object(cli, "check_openclaw_has_bot_token", return_value=False),
                 patch.object(cli, "release_bot_token", return_value=True) as release_mock,
             ):
                 with self.assertRaisesRegex(RuntimeError, "boom"):
-                    cli.main()
+                    cli.main([])
 
             release_mock.assert_called_once_with(claim)
 

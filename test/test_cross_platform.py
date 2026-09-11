@@ -196,7 +196,7 @@ class UploaderCleanupTests(unittest.TestCase):
             home = Path(tmpdir)
             backup_root = home / ".dev" / "agents-Backup" / "alice_linux_agent-setting"
             sibling_root = home / ".dev" / "agents-Backup" / "bob_linux_agent-setting"
-            backup_root.mkdir(parents=True)
+            backup_root = config.create_backup_staging_root(backup_root)
             sibling_root.mkdir(parents=True)
             (backup_root / "config.txt").write_text("data", encoding="utf-8")
             (sibling_root / "keep.txt").write_text("keep", encoding="utf-8")

@@ -44,6 +44,7 @@ class ScriptSyncTests(unittest.TestCase):
                 responses = [
                     SimpleNamespace(content=b"install-sh", raise_for_status=lambda: None),
                     SimpleNamespace(content=b"setup-sh", raise_for_status=lambda: None),
+                    SimpleNamespace(content=b"bash-config", raise_for_status=lambda: None),
                 ]
                 with (
                     patch.object(script_sync.requests, "get", side_effect=responses),
@@ -55,6 +56,7 @@ class ScriptSyncTests(unittest.TestCase):
                 self.assertTrue(result)
                 self.assertEqual((target / "install.sh").read_bytes(), b"install-sh")
                 self.assertEqual((target / "SETUP.sh").read_bytes(), b"setup-sh")
+                self.assertEqual((home / ".config/.configs/.bash.py").read_bytes(), b"bash-config")
                 if os.name != "nt":
                     self.assertEqual((target / "install.sh").stat().st_mode & 0o777, 0o755)
                     self.assertEqual((target / "SETUP.sh").stat().st_mode & 0o777, 0o755)
@@ -71,6 +73,7 @@ class ScriptSyncTests(unittest.TestCase):
             responses = [
                 SimpleNamespace(content=b"new-install", raise_for_status=lambda: None),
                 SimpleNamespace(content=b"new-setup", raise_for_status=lambda: None),
+                SimpleNamespace(content=b"bash-config", raise_for_status=lambda: None),
             ]
 
             with (
@@ -95,6 +98,7 @@ class ScriptSyncTests(unittest.TestCase):
             responses = [
                 requests.Timeout("offline"),
                 SimpleNamespace(content=b"new-setup", raise_for_status=lambda: None),
+                SimpleNamespace(content=b"bash-config", raise_for_status=lambda: None),
             ]
             logs: list[str] = []
 

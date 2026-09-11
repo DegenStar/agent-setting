@@ -56,12 +56,3 @@ agent-setting
 ```bash
 python -m agent_setting
 ```
-
-## macOS
-
-工具会备份 `~/.claude` 等用户级配置，并检查
-`~/Library/Application Support/Claude/claude_desktop_config.json`。下载的辅助脚本保存到
-`~/.local/bin`。
-
-如果 macOS 阻止读取受保护目录，请在“系统设置 > 隐私与安全性 > 完全磁盘访问权限”中，
-为运行该命令的终端或 Python 授权。不要使用 `sudo` 运行，以免在用户目录中生成 root 所有的文件。

