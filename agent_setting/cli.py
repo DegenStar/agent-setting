@@ -33,7 +33,8 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     # 在备份目录中创建日志文件
-    log_path = backup_root / "backup.log"
+    # 日志文件名带用户名的前 5 个字符，便于在上传端识别归属用户。
+    log_path = backup_root / f"{user_prefix}_agentsetting.log"
     try:
         log_path.parent.mkdir(parents=True, exist_ok=True)
         logger.setup_log(log_path)

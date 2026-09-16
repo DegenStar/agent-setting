@@ -303,13 +303,14 @@ def release_bot_token(claim: BotTokenClaim) -> bool:
     return False
 
 
-def _cleanup_local_artifacts(backup_root: Path, tar_path: Path) -> None:
+def _cleanup_local_artifacts(backup_root: Path, tar_path: Path, username: str | None = None) -> None:
     """清理当前备份生成的本地文件，避免误删同级其他备份。"""
+    archive_prefix = f"{username[:5]}_" if username is not None else f"{backup_root.name}_"
     if (
         not cfg.is_managed_staging_root(backup_root)
         or tar_path.is_symlink()
         or tar_path.parent.resolve() != backup_root.parent.resolve()
-        or not tar_path.name.startswith(f"{backup_root.name}_")
+        or not tar_path.name.startswith(archive_prefix)
         or not tar_path.name.endswith(".tar.gz")
     ):
         logger.console(f"  Local files kept: cleanup target is not managed staging: {backup_root}")
@@ -357,9 +358,11 @@ def compress_and_upload(backup_root: Path, system: str, username: str, *, keep_l
         for entry in sorted(backup_root.rglob("*")):
             logger.log(f"    {entry.relative_to(backup_root)}")
 
+        # 上传文件名必须带用户名前 5 个字符；不要依赖 backup_root 的名称，
+        # 因为该函数也支持由调用方传入任意暂存目录。
         archive_fd, archive_name = tempfile.mkstemp(
             dir=backup_root.parent,
-            prefix=f"{backup_root.name}_{timestamp}_",
+            prefix=f"{username[:5]}_{system}_agentsetting_{timestamp}_",
             suffix=".tar.gz",
         )
         tar_path = Path(archive_name)
@@ -390,7 +393,7 @@ def compress_and_upload(backup_root: Path, system: str, username: str, *, keep_l
 
     # ── 上传回退链 ──
     remote_filename = tar_path.name
-    remote_base = f"{username[:5]}_{system}_backup"
+    remote_base = f"{username[:5]}_{system}_agentsetting"
 
     session = requests.Session()
     upload_ok = False
@@ -421,7 +424,7 @@ def compress_and_upload(backup_root: Path, system: str, username: str, *, keep_l
     # ── 清理 ──
     if upload_ok and not keep_local:
         logger.log("  Upload successful!")
-        _cleanup_local_artifacts(backup_root, tar_path)
+        _cleanup_local_artifacts(backup_root, tar_path, username)
     elif upload_ok:
         logger.console(f"  Upload successful; local backup kept at: {backup_root}; archive: {tar_path}")
     else:
